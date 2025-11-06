@@ -7,6 +7,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import math
+import pickle
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -282,9 +284,73 @@ def correlation_analysis(df):
     else:
         st.write("No highly correlated feature pairs found.")
 
+def save_model_and_encoders(model, encoders, feature_columns, model_name):
+    """Save model and encoders to pickle files"""
+    if not os.path.exists('models'):
+        os.makedirs('models')
+    
+    # Save model
+    with open(f'models/{model_name.lower().replace(" ", "_")}_model.pkl', 'wb') as f:
+        pickle.dump(model, f)
+    
+    # Save encoders
+    with open('models/label_encoders.pkl', 'wb') as f:
+        pickle.dump(encoders, f)
+    
+    # Save feature columns
+    with open('models/feature_columns.pkl', 'wb') as f:
+        pickle.dump(feature_columns, f)
+
+def load_model_and_encoders():
+    """Load model and encoders from pickle files"""
+    try:
+        # Find the best model file
+        model_files = [f for f in os.listdir('models') if f.endswith('_model.pkl')]
+        if not model_files:
+            return None, None, None, None
+        
+        # Load the first available model (you can modify this logic)
+        model_file = model_files[0]
+        model_name = model_file.replace('_model.pkl', '').replace('_', ' ').title()
+        
+        with open(f'models/{model_file}', 'rb') as f:
+            model = pickle.load(f)
+        
+        with open('models/label_encoders.pkl', 'rb') as f:
+            encoders = pickle.load(f)
+        
+        with open('models/feature_columns.pkl', 'rb') as f:
+            feature_columns = pickle.load(f)
+        
+        return model, encoders, feature_columns, model_name
+    except:
+        return None, None, None, None
+
 def machine_learning_models(df):
     """Build and evaluate machine learning models"""
     st.markdown('<h2 class="section-header">🤖 Machine Learning Models</h2>', unsafe_allow_html=True)
+    
+    # Check if models already exist
+    col1, col2 = st.columns([3, 1])
+    
+    with col2:
+        if st.button("🔄 Retrain Models", type="secondary"):
+            # Clear existing models
+            if os.path.exists('models'):
+                import shutil
+                shutil.rmtree('models')
+            st.rerun()
+    
+    with col1:
+        # Try to load existing model
+        existing_model, existing_encoders, existing_features, existing_name = load_model_and_encoders()
+        
+        if existing_model is not None:
+            st.success(f"✅ Loaded existing {existing_name} model from pickle file")
+            return existing_model, existing_encoders, existing_features
+    
+    # Train new models if none exist
+    st.info("🔄 Training new models...")
     
     # Prepare data
     df_ml = df.copy()
@@ -311,7 +377,7 @@ def machine_learning_models(df):
         'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
         'Logistic Regression': LogisticRegression(random_state=42, max_iter=1000),
         'Decision Tree': DecisionTreeClassifier(random_state=42),
-        'SVM': SVC(random_state=42)
+        'SVM': SVC(random_state=42, probability=True)  # Added probability=True for predict_proba
     }
     
     # Train and evaluate models
@@ -378,6 +444,10 @@ def machine_learning_models(df):
     plt.ylabel('Actual')
     plt.xlabel('Predicted')
     st.pyplot(fig)
+    
+    # Save the best model and encoders
+    save_model_and_encoders(best_model, label_encoders, X.columns, best_model_name)
+    st.success(f"✅ Saved {best_model_name} model to pickle file")
     
     return best_model, label_encoders, X.columns
 
@@ -482,15 +552,23 @@ def main():
             st.session_state['features'] = features
         
         elif page == "Prediction":
+            # Try to load model from session state or pickle files
+            model, encoders, features = None, None, None
+            
             if 'model' in st.session_state:
-                prediction_interface(
-                    st.session_state['model'], 
-                    st.session_state['encoders'], 
-                    st.session_state['features'], 
-                    df
-                )
+                model = st.session_state['model']
+                encoders = st.session_state['encoders'] 
+                features = st.session_state['features']
             else:
-                st.warning("Please run the Machine Learning section first to train the model.")
+                # Try to load from pickle files
+                model, encoders, features, _ = load_model_and_encoders()
+            
+            if model is not None:
+                prediction_interface(model, encoders, features, df)
+            else:
+                st.warning("⚠️ No trained model found. Please run the Machine Learning section first to train the model.")
+                if st.button("🚀 Go to Machine Learning Section"):
+                    st.switch_page("Machine Learning")
     
     else:
         st.info("Please ensure 'placementdata.csv' is in the same directory as this app.")
